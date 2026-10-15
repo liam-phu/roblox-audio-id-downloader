@@ -83,3 +83,5 @@ Everything is saved in one flat folder (`ROBLOX_AUDIO/` by default). Files are n
   failed.txt
   ROBLOX_AUDIO/
   ```
+## License
+MIT. This covers the script only, not any audio you download with it. Have fun :>
