@@ -6,23 +6,23 @@ import shutil
 import requests
 
 # ================== Config ==================
+# usage: python download_roblox_audio.py [data_file] [output_folder]
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_FOLDER = os.path.join(SCRIPT_DIR, "HOVERS_SFX")
-DATA_FILE = os.path.join(SCRIPT_DIR, "Data.txt")
+DATA_FILE = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(SCRIPT_DIR, "Data.txt")
+BASE_FOLDER = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else os.path.join(SCRIPT_DIR, "ROBLOX_AUDIO")
 COOKIE_FILE = os.path.join(SCRIPT_DIR, "cookie.txt")
 FAILED_FILE = os.path.join(SCRIPT_DIR, "failed.txt")
-PLACE_ID = os.environ.get("PLACE_ID", "").strip()
+PLACE_ID = os.environ.get("PLACE_ID", "").strip()   # game's place ID, needed for audio the game owns
 DELAY = 1.0          # seconds between downloads
 KNOWN_EXTS = (".mp3", ".ogg", ".wav", ".flac")
 
-# headers in Data.txt that are hosts. anything else ending in ":" is a skill
-HOSTS = {
-    "Hot Gash", "Hot Slash", "Hot Flash", "Hot Kalash",
-    "Invader", "Prophet", "Witness", "Artisan",
-    "Vestige", "Visitor", "Subject",
-    "Parting", "Dreamer", "Equinox", "Bloxxer",
-    "Drifter", "Hellion", "Buffoon",
-}
+# Data.txt layout:
+#   Group:            <- first header after a "____" line (or at the top) = top-level group
+#   Skill:            <- any other header = sub-group
+#   name: 123456789   <- audio line (anything after the ID is ignored)
+# A header that should ALWAYS count as a top-level group, even without a "____" above it,
+# goes here. Leave empty if you don't need it.
+EXTRA_GROUPS = set()
 
 # ================== Cookie ==================
 cookie = os.environ.get("ROBLOSECURITY", "").strip().strip('"')
@@ -141,25 +141,31 @@ def parse_entries():
         sys.exit(f"Can't find {DATA_FILE}")
 
     entries = []
-    host, skill = "General", ""
-    with open(DATA_FILE, encoding="utf-8") as fh:
+    group, skill = "General", ""
+    after_sep = True      # top of file or right after "____" -> next header is a group
+    with open(DATA_FILE, encoding="utf-8-sig") as fh:
         for raw in fh.read().splitlines():
             line = raw.strip()
-            if not line or line.startswith("____"):
+            if not line:
                 skill = ""
+                continue
+            if line.startswith("____"):
+                skill, after_sep = "", True
                 continue
             if line.endswith(":"):
                 name = line[:-1].strip()
-                if name in HOSTS:
-                    host, skill = name, ""
+                if after_sep or name in EXTRA_GROUPS:
+                    group, skill = name, ""
                 else:
                     skill = name
+                after_sep = False
                 continue
-            m = re.match(r"^(\w+):\s*(\d+)", line)
+            after_sep = False
+            m = re.match(r"^([\w\-]+):\s*(\d+)", line)
             if not m:
                 continue
             audio_name, asset_id = m.groups()
-            parts = [safe(host)] + ([safe(skill)] if skill else []) + [audio_name]
+            parts = [safe(group)] + ([safe(skill)] if skill else []) + [audio_name]
             entries.append({"base": "_".join(parts), "id": asset_id})
     return entries
 
