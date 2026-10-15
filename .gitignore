@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Roblox audio downloader
+cookie.txt
+failed.txt
+ROBLOX_AUDIO/
+HOVERS_SFX/
+*.part
