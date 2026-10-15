@@ -5,20 +5,23 @@ import time
 import shutil
 import requests
 
-# ================== Cấu hình ==================
+# ================== Config ==================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_FOLDER = os.path.join(SCRIPT_DIR, "HOVERS_SFX")
 DATA_FILE = os.path.join(SCRIPT_DIR, "Data.txt")
 COOKIE_FILE = os.path.join(SCRIPT_DIR, "cookie.txt")
 FAILED_FILE = os.path.join(SCRIPT_DIR, "failed.txt")
 PLACE_ID = os.environ.get("PLACE_ID", "").strip()
-DELAY = 1.0          # giây nghỉ giữa các lần tải
+DELAY = 1.0          # seconds between downloads
 KNOWN_EXTS = (".mp3", ".ogg", ".wav", ".flac")
 
+# headers in Data.txt that are hosts. anything else ending in ":" is a skill
 HOSTS = {
     "Hot Gash", "Hot Slash", "Hot Flash", "Hot Kalash",
     "Invader", "Prophet", "Witness", "Artisan",
     "Vestige", "Visitor", "Subject",
+    "Parting", "Dreamer", "Equinox", "Bloxxer",
+    "Drifter", "Hellion", "Buffoon",
 }
 
 # ================== Cookie ==================
@@ -27,7 +30,7 @@ if not cookie and os.path.exists(COOKIE_FILE):
     with open(COOKIE_FILE, encoding="utf-8") as f:
         cookie = f.read().strip().strip('"')
 if not cookie:
-    sys.exit(f"❌ Không tìm thấy cookie. Hãy tạo file: {COOKIE_FILE}")
+    sys.exit(f"No cookie. Put it in: {COOKIE_FILE}")
 
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -36,7 +39,7 @@ session.cookies.set(".ROBLOSECURITY", cookie, domain=".roblox.com")
 os.makedirs(BASE_FOLDER, exist_ok=True)
 
 
-# ================== Tiện ích ==================
+# ================== Helpers ==================
 def safe(s):
     return re.sub(r"[^\w\-]+", "_", s).strip("_")
 
@@ -52,7 +55,7 @@ def detect_ext(data):
 
 
 def is_valid_file(path):
-    """File hợp lệ: không rỗng và không phải trang lỗi HTML/JSON."""
+    """Valid = not empty, not an HTML/JSON error page."""
     try:
         if os.path.getsize(path) == 0:
             return False
@@ -64,14 +67,14 @@ def is_valid_file(path):
 
 
 def find_existing(base, asset_id):
-    """Tìm file đã tải (tên mới hoặc tên cũ sfx_<id>). Trả về đường dẫn hợp lệ hoặc None."""
+    """Look for a file we already have (new name or old sfx_<id> name). Valid path or None."""
     candidates = [base + e for e in KNOWN_EXTS] + [f"sfx_{asset_id}{e}" for e in KNOWN_EXTS]
     for name in candidates:
         path = os.path.join(BASE_FOLDER, name)
         if os.path.exists(path):
             if is_valid_file(path):
                 return path
-            print(f"🗑️  File hỏng, sẽ tải lại: {name}")
+            print(f"Broken file, redownloading: {name}")
             try:
                 os.remove(path)
             except OSError:
@@ -82,21 +85,21 @@ def find_existing(base, asset_id):
 def check_login():
     r = session.get("https://users.roblox.com/v1/users/authenticated", timeout=20)
     if r.status_code != 200:
-        sys.exit(f"❌ Cookie không hợp lệ/hết hạn (HTTP {r.status_code}). Copy lại cookie mới.")
-    print(f"🔑 Đăng nhập OK: {r.json().get('name')}")
+        sys.exit(f"Cookie's dead (HTTP {r.status_code}). Grab a fresh one.")
+    print(f"Logged in as {r.json().get('name')}")
 
 
 def download(asset_id, retries=4):
     url = f"https://assetdelivery.roblox.com/v2/assetId/{asset_id}"
     headers = {"Roblox-Place-Id": PLACE_ID} if PLACE_ID else {}
-    last_err = "không rõ"
+    last_err = "unknown"
 
     for attempt in range(retries):
         try:
             r = session.get(url, headers=headers, timeout=30)
 
             if r.status_code == 429:
-                last_err = "bị rate limit (429)"
+                last_err = "rate limited (429)"
                 time.sleep(3 * (attempt + 1))
                 continue
             if r.status_code != 200:
@@ -105,9 +108,9 @@ def download(asset_id, retries=4):
             info = r.json()
             locations = info.get("locations") or []
             if not locations:
-                return None, f"không có link tải: {str(info.get('errors'))[:150]}"
+                return None, f"no download link: {str(info.get('errors'))[:150]}"
 
-            # CDN: request sạch, KHÔNG kèm cookie
+            # CDN: clean request, NO cookie
             f = requests.get(locations[0]["location"],
                              headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
             if f.status_code == 200 and f.content:
@@ -117,7 +120,7 @@ def download(asset_id, retries=4):
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
                 requests.exceptions.ChunkedEncodingError) as e:
-            last_err = f"lỗi mạng: {type(e).__name__}"
+            last_err = f"network error: {type(e).__name__}"
 
         time.sleep(2 * (attempt + 1))
 
@@ -125,17 +128,17 @@ def download(asset_id, retries=4):
 
 
 def save_atomic(path, data):
-    """Ghi ra .part rồi đổi tên, để lỡ bị ngắt giữa chừng không tạo file dở."""
+    """Write to .part, then rename. A crash won't leave a half-written file."""
     tmp = path + ".part"
     with open(tmp, "wb") as f:
         f.write(data)
     os.replace(tmp, path)
 
 
-# ================== Đọc danh sách ==================
+# ================== Parse the list ==================
 def parse_entries():
     if not os.path.exists(DATA_FILE):
-        sys.exit(f"❌ Không tìm thấy {DATA_FILE}")
+        sys.exit(f"Can't find {DATA_FILE}")
 
     entries = []
     host, skill = "General", ""
@@ -161,32 +164,32 @@ def parse_entries():
     return entries
 
 
-# ================== Chạy ==================
+# ================== Run ==================
 def main():
-    for leftover in os.listdir(BASE_FOLDER):          # dọn file .part dở từ lần chạy trước
+    for leftover in os.listdir(BASE_FOLDER):          # wipe .part leftovers from last run
         if leftover.endswith(".part"):
             os.remove(os.path.join(BASE_FOLDER, leftover))
 
     entries = parse_entries()
     total = len(entries)
 
-    # Bước 1: quét xem file nào đã có, file nào thiếu
+    # step 1: what do we have, what's missing
     have, missing = [], []
     for e in entries:
         path = find_existing(e["base"], e["id"])
         (have if path else missing).append(e)
 
-    print(f"📋 Tổng: {total} | Đã có: {len(have)} | Cần tải: {len(missing)}")
+    print(f"Total: {total} | Have: {len(have)} | Missing: {len(missing)}")
     if not missing:
-        print("🎉 Đã đủ tất cả file, không cần tải thêm.")
+        print("Everything's already here. Nothing to do.")
         return
 
     check_login()
 
-    # Bước 2: chỉ tải file thiếu
+    # step 2: download only what's missing
     ok = copied = 0
     failed = []
-    done_by_id = {}   # id -> đường dẫn file đã có/đã tải, để ID trùng chỉ tải 1 lần
+    done_by_id = {}   # id -> path, so a duplicate ID only gets downloaded once
     for e in have:
         p = find_existing(e["base"], e["id"])
         if p:
@@ -197,38 +200,38 @@ def main():
             base, asset_id = e["base"], e["id"]
             tag = f"[{i}/{len(missing)}]"
 
-            # Cùng ID đã có file khác -> chép lại, không gọi API
+            # same ID already on disk -> copy it, skip the API
             if asset_id in done_by_id:
                 src = done_by_id[asset_id]
                 ext = os.path.splitext(src)[1]
                 shutil.copyfile(src, os.path.join(BASE_FOLDER, base + ext))
-                print(f"{tag} 📄 {base}{ext} (trùng ID {asset_id}, chép từ file có sẵn)")
+                print(f"{tag} copied {base}{ext} (same ID {asset_id}, reused existing file)")
                 copied += 1
                 continue
 
             data, err = download(asset_id)
             if data is None:
-                print(f"{tag} ❌ {base} (ID {asset_id}) -> {err}")
+                print(f"{tag} FAIL {base} (ID {asset_id}) -> {err}")
                 failed.append(f"{base}: {asset_id} -> {err}")
             else:
                 path = os.path.join(BASE_FOLDER, base + detect_ext(data))
                 save_atomic(path, data)
                 done_by_id[asset_id] = path
-                print(f"{tag} ✅ {os.path.basename(path)}")
+                print(f"{tag} ok {os.path.basename(path)}")
                 ok += 1
             time.sleep(DELAY)
 
     except KeyboardInterrupt:
-        print("\n⏹️  Đã dừng. Chạy lại script để tải tiếp phần còn thiếu.")
+        print("\nStopped. Run it again to pick up the rest.")
 
-    print(f"\nXong: {ok} tải mới, {copied} chép từ ID trùng, {len(failed)} lỗi, "
-          f"{len(have)} đã có từ trước.")
+    print(f"\nDone: {ok} new, {copied} copied from duplicate IDs, {len(failed)} failed, "
+          f"{len(have)} already had.")
 
     if failed:
         with open(FAILED_FILE, "w", encoding="utf-8") as f:
             f.write("\n".join(failed))
-        print(f"Danh sách lỗi đã lưu vào {FAILED_FILE}")
-        print("Chạy lại script để thử tải lại riêng các file lỗi này.")
+        print(f"Failures saved to {FAILED_FILE}")
+        print("Run it again to retry just those.")
     elif os.path.exists(FAILED_FILE):
         os.remove(FAILED_FILE)
 
